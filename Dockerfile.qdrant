@@ -1,0 +1,21 @@
+# Dockerfile for Qdrant
+FROM qdrant/qdrant:v1.14.0
+
+# 设置维护者信息（可选）
+LABEL maintainer="quillnk@qq.com"
+
+# 安装 curl（最小化安装，不带文档）
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends curl && \
+    rm -rf /var/lib/apt/lists/*
+
+# 可选：验证 curl 是否可用
+RUN curl --version
+
+# 健康检查：检查 Qdrant 是否就绪
+# 端点：http://localhost:6333/ready
+# 返回 200 表示就绪
+# HEALTHCHECK，交给 docker-compose
+
+# 声明端口（可选，但推荐）
+EXPOSE 6333
