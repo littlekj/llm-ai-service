@@ -9,11 +9,11 @@ class Settings(BaseSettings):
     
     # 基础配置
     DEBUG: bool = False
-    ENVIRONMENT: str = "development"
+    ENVIRONMENT: str = "development"  # development | production | staging
     HOST: str = "0.0.0.0"
     PORT: int = 8000
     DOMAIN: str = "localhost"
-    PROJECT_NAME: str = "LLM AI Service"
+    PROJECT_NAME: str = "llm-ai-service"
 
     # 数据库配置
     # 方式1：优先使用完整连接串（云服务友好）
@@ -63,10 +63,41 @@ class Settings(BaseSettings):
     RESEND_API_KEY: SecretStr = SecretStr("")
     RESEND_FROM_EMAIL: str = ""
     FRONTEND_RESET_URL: str = ""
+    # 前端邮箱确认页面地址（用于发送确认邮件）
+    FRONTEND_CONFIRM_URL: str = ""
+    
+    # Redis 配置
+    REDIS_HOST: Optional[str] = None
+    REDIS_PORT: Optional[int] = None
+    REDIS_DB: Optional[int] = None
+    REDIS_PASSWORD: SecretStr = SecretStr("")
     
     # Celery 配置
     CELERY_BROKER_URL: str = "redis://localhost:6379/0"
-    CELERY_RESULT_BACKEND: str = "redis://localhost:6379/0"
+    CELERY_RESULT_BACKEND: str = "redis://localhost:6379/1"
+    CELERY_WORKER_CONCURRENCY: Optional[int] = None
+    
+    # 日志配置
+    APP_LOG_LEVEL: str = "INFO"
+
+    # 文档保留策略
+    DOCUMENT_RETENTION_PERIOD_DAYS: float = 30.0
+    
+    # Qdrant 配置
+    QDRANT_SERVER_URL: str = "http://localhost:6333"
+    QDRANT_API_KEY: SecretStr = SecretStr("")
+    
+    # Embeddings 配置
+    EMBEDDING_MODEL_NAME: str = ""
+    EMBEDDING_MODEL_CACHE_DIR: Optional[str] = None
+    
+    # LLM 配置
+    LLM_MODEL_NAME: str = ""
+    LLM_API_URL: str = ""
+    LLM_API_KEY: SecretStr = SecretStr("")
+    
+    # SSL 配置
+    SSL_CERT_FILE: Optional[str] = None
 
     # CORS 配置
     ALLOWED_ORIGINS: List[str] = Field(

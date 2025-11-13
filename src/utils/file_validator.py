@@ -1,9 +1,12 @@
-from pathlib import Path
-from typing import Dict, Union, BinaryIO
 import sys
 import re
 import os
 import logging
+from pathlib import Path
+from typing import Dict, Union, BinaryIO
+
+from src.core.errors import ErrorCode, FileValidationError
+
 
 logger = logging.getLogger(__name__)
 
@@ -83,11 +86,19 @@ async def validate_file_extension(filename: str) -> Union[str, None]:
     :param filename: 文件名
     :return: 文件扩展名，如果文件扩展名无效则返回None
     """
-    print("filename: ", filename)
+    # print("filename: ", filename)
     ext = Path(filename).suffix.lower()
     if ext not in ALLOWED_EXTENSIONS:
-        logger.warning(f"Invalid file extension: {ext}")
-        return None
+        logger.error(f"File type not allowed: {ext}")
+        raise FileValidationError(
+            message=f"File type not allowed: {ext}",
+            error_code=ErrorCode.FILE_TYPE_NOT_ALLOWED,
+            details={
+                "filename": filename,
+                "extension": ext,
+                "allowed_extensions": list(ALLOWED_EXTENSIONS),
+            }
+        )
     return ext
 
 
@@ -98,19 +109,30 @@ def validate_file_size(file, max_size: int = MAX_FILE_SIZE) -> int:
     :param max_size: 最大文件大小（字节）
     :return: 实际文件大小（字节）
     """
-    try:
-        original_pos = file.tell()   # 获取当前文件指针位置
-        file.seek(0, 2)  # 移动到文件末尾（标准值：0=开头，1=当前位置，2=末尾）
-        size = file.tell()  # 获取文件大小
-        file.seek(original_pos)  # 恢复文件指针位置
-        if size > max_size:
-            raise ValueError(f"File size ({size} bytes) exceeds max limit ({max_size} bytes)")
-        if size == 0:
-            raise ValueError("File size cannot be empty")
-    except Exception:
-        raise ValueError("File size cannot be obtained")
     
-    return size
+    file.seek(0, 2)  # 移动到文件末尾（标准值：0=开头，1=当前位置，2=末尾）
+    file_size = file.tell()  # 获取文件大小
+    file.seek(0)  # 重置文件指针到开头
+
+    if file_size == 0:
+        raise FileValidationError(
+            message="File size cannot be empty",
+            error_code=ErrorCode.FILE_EMPTY,
+            details={"filename": file.name}
+        )
+        
+    if file_size > max_size:
+        raise FileValidationError(
+            message=f"File size exceeds limit ({max_size}) bytes",
+            error_code=ErrorCode.FILE_TOO_LARGE,
+            details={
+                "filename": file.name,
+                "file_size": file_size,
+                "max_size": max_size
+            }
+        )
+        
+    return file_size
 
 
 async def validate_file_size_async(file_obj: BinaryIO, max_size: int = MAX_FILE_SIZE) -> int:
@@ -130,31 +152,31 @@ async def validate_file_size_async(file_obj: BinaryIO, max_size: int = MAX_FILE_
                 break
             total_size += len(chunk)
             if total_size > max_size:
-                raise ValueError(f"File size exceeds max limit: {max_size} bytes") 
+                raise FileValidationError(
+                    message=f"File size exceeds limit ({max_size}) bytes",
+                    error_code=ErrorCode.FILE_TOO_LARGE,
+                    details={
+                        "current_size": total_size,
+                        "max_size": max_size
+                    }
+                )
         if total_size == 0:
-            raise ValueError(f"File connot be empty")
+            raise FileValidationError(
+                message="File size cannot be empty",
+                error_code=ErrorCode.FILE_EMPTY,
+            )
         return total_size
-    except Exception:
-        raise
+    
+    except IOError as e:
+        raise FileValidationError(
+            message="Failed to read file",
+            error_code=ErrorCode.FILE_CORRUPTED,
+            details={"error": str(e)}
+        )
     finally:
         # 尝试重置文件指针位置
         if hasattr(file_obj, 'seek'):
             try:
                 file_obj.seek(original_pos)
-            except Exception as e:
+            except (IOError, OSError) as e:
                 logger.warning(f"Failed to reset file pointer: {e}")     
-        
-    
-    # try:
-    #     original_pos = file.tell()   # 获取当前文件指针位置
-    #     file.seek(0, 2)  # 移动到文件末尾（标准值：0=开头，1=当前位置，2=末尾）
-    #     size = file.tell()  # 获取文件大小
-    #     file.seek(original_pos)  # 恢复文件指针位置
-    #     if size > max_size:
-    #         raise ValueError(f"File size ({size} bytes) exceeds max limit ({max_size} bytes)")
-    #     if size == 0:
-    #         raise ValueError("File size cannot be empty")
-    # except Exception:
-    #     raise ValueError("File size cannot be obtained")
-    
-    # return size

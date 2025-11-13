@@ -1,12 +1,14 @@
 from fastapi import APIRouter, Depends, HTTPException, Response, Request, status
 from fastapi import BackgroundTasks
 from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.exc import SQLAlchemyError
+from pydantic import EmailStr
 
 from src.schemas.user import UserResponse, UserCreate, TokenResponse
 from src.schemas.user import PasswordResetRequest, PasswordResetConfirm, PasswordChangeRequest
-from src.core.depends import get_sync_session
+from src.core.depends import get_sync_session, get_async_session
 from src.services.user_service import UserService
 from src.core import security
 from src.core.exceptions import UserAlreadyExistsError, AuthenticationError
@@ -21,11 +23,11 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 
 @router.post("/register", response_model=UserResponse, status_code=201)
-def register(user_in: UserCreate, db: Session = Depends(get_sync_session)):
+async def register(user_in: UserCreate, db: AsyncSession = Depends(get_async_session)):
     """用户注册"""
     service = UserService(db)  # 实例化用户服务
     try:
-        new_user = service.create_user(user_in)  # 调用用户服务创建用户
+        new_user = await service.register_user(user_in)  # 调用用户服务创建用户
         return new_user
     except UserAlreadyExistsError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -33,7 +35,35 @@ def register(user_in: UserCreate, db: Session = Depends(get_sync_session)):
         # 未知错误统一转 500
         logger.exception(f"DB error during registration: {e}")
         raise HTTPException(status_code=500, detail="Internal Server Error")
-
+    
+@router.post("/confirm-email")
+async def confirm_email(token: str, db: AsyncSession = Depends(get_async_session)):
+    """激活用户账户"""
+    user_service = UserService(db)
+    try:
+        await user_service.confirm_email(token)
+        return {"message": "Email confirmed. You can log in now."}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.exception(f"Unexpected error during email confirmation: {e}")
+        raise HTTPException(status_code=500, detail="Failed to confirm email")
+    
+@router.post("/resend-confirmation")
+async def resend_confirmation_email(
+    email: EmailStr,
+    db: AsyncSession = Depends(get_async_session)
+):
+    """重新发送用户激活邮件"""
+    user_service = UserService(db)
+    try:
+        await user_service.resend_confirmation_email(email)
+        return {"message": "Confirmation email has been resent."}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.exception(f"Unexpected error during email resend: {e}")
+        raise HTTPException(status_code=500, detail="Failed to resend confirmation email")
 
 @router.post("/login", response_model=TokenResponse)
 def login(

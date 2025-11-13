@@ -11,6 +11,7 @@ curl http://localhost:8000/api/v1/health
 
 ## 项目结构
 
+```
 src/
 ├── api/          # 路由与控制器
 ├── core/         # 配置、依赖注入、中间件
@@ -19,6 +20,7 @@ src/
 ├── services/     # 业务逻辑
 ├── utils/        # 工具函数
 └── workers/      # Celery 任务
+```
 
 ## 开发指南
 

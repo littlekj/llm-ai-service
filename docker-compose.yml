@@ -42,7 +42,7 @@ services:
     container_name: llm-redis
     environment:
       - REDIS_PASSWORD=${REDIS_PASSWORD}  # 确保容器内有该变量
-    command: sh -c 'exec redis-server --requirepass "$REDIS_PASSWORD"'
+    command: sh -c 'exec redis-server --requirepass "$REDIS_PASSWORD" --tcp-keepalive 60'
     ports:
       - "6379:6379"
     volumes:

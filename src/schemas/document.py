@@ -1,15 +1,19 @@
 from pydantic import BaseModel, Field, computed_field
 from pydantic import field_validator, model_validator
-from typing import Optional, List, Generic, TypeVar
+from typing import Optional, List, Generic, TypeVar, Type
 from uuid import UUID
 # from enum import Enum as PyEnum
 from datetime import datetime
 from math import ceil
 
-from src.models.document import DocumentStatus
+from src.models.document import StorageStatus, ProcessingStatus
 from src.utils.file_validator import sanitize_filename
 
 
+# 通用分页响应模型
+T = TypeVar('T')  # 用于泛型，支持不同类型的分页数据
+
+PaginationResponseT = TypeVar('PaginationResponseT', bound=BaseModel)  # 用于泛型，支持不同类型的响应模型
 
 class DocumentBase(BaseModel):
     """
@@ -102,10 +106,15 @@ class DocumentResponse(DocumentBase):
     
     id: UUID = Field(..., description="文档 UUID")  # UUID 转换为 str
     size_bytes: int = Field(ge=0, description="文件大小，单位字节")
-    status: DocumentStatus = Field(..., description="文档处理状态")
+    storage_status: StorageStatus = Field(..., description="存储状态")
+    processing_status: ProcessingStatus = Field(..., description="处理状态")
     error_message: Optional[str] = Field(None, description="错误信息（仅当失败时）")
+    is_deleted: bool = Field(False, description="是否已删除")
+    deleted_at: Optional[datetime] = Field(None, description="删除时间（UTC）")
     created_at: datetime = Field(..., description="创建时间（UTC）")
     updated_at: datetime = Field(..., description="最后更新时间（UTC）")
+    version_id: Optional[str] = Field(None, description="文档版本 ID")
+    storage_key: Optional[str] = Field(None, description="MinIO 对象路径")
     
     model_config = {
         "from_attributes": True,  # 支持 ORM 模型直接转换为该模型
@@ -116,18 +125,19 @@ class DocumentResponse(DocumentBase):
                     "filename": "example.pdf",
                     "size_bytes": 12345,
                     "content_type": "application/pdf",
-                    "status": "indexed",
+                    "storage_status": "archived",
+                    "processing_status": "success",
                     "error_message": None,
+                    "is_deleted": False,
+                    "deleted_at": None,
                     "created_at": "2023-01-01T00:00:00Z",
                     "updated_at": "2023-01-01T00:00:00Z",
+                    "version_id": None,
                 } 
             ]
         }
     }
  
-       
-# 通用分页响应模型
-T = TypeVar('T')  # 用于泛型，支持不同类型的分页数据
 
 class PaginationResponse(BaseModel, Generic[T]):
     """
@@ -162,11 +172,14 @@ class PaginationResponse(BaseModel, Generic[T]):
                             "content_type": "application/pdf",
                             "status": "indexed",
                             "error_message": None,
+                            "is_deleted": False,
+                            "deleted_at": None,
                             "created_at": "2023-01-01T00:00:00Z",
                             "updated_at": "2023-01-01T00:00:00Z",
+                            "version_id": None,
                         }
                     ],
-                    "total": 1,
+                    "total": 20,
                     "page": 1,
                     "size": 10,
                     # "pages": 1,  # 自动计算，无需手动提供
@@ -189,6 +202,9 @@ def create_pagination_response(
     page: int,
     size: int,
 ) -> PaginationResponse[T]:
+    """
+    创建分页响应模型
+    """
     
     return PaginationResponse[T](
         items=items,
@@ -197,3 +213,78 @@ def create_pagination_response(
         size=size,
         # pages 自动计算
     )
+    
+class DocumentObjectResponse(BaseModel):
+    """
+    返回单个文档对象信息的响应模型
+    """
+    object_name: str = Field(..., description="对象名称")
+    last_modified: datetime = Field(..., description="最后修改时间（UTC）")
+    etag: Optional[str] = Field(None, description="ETag")
+    size: int = Field(..., description="文件大小，单位字节")
+    metadata: Optional[dict[str, str]] = Field(None, description="元数据")
+    version_id: Optional[str] = Field(None, description="文档版本 ID")
+    is_latest: Optional[str] = Field(None, description="是否最新版本")
+    is_delete_marker: bool = Field(False, description="是否为 Delete Marker")
+    
+    model_config = {
+        "from_attributes": True,
+        "json_schema_extra": {
+            "example": [
+                {
+                    "object_name": "uploads/2025/09/29/71d5efdab3d74f549e3c3f9d3a3d3a3d.pdf",
+                    "last_modified": "2023-01-01T00:00:00Z",
+                    "etag": "123456789abcdef",
+                    "size": 12345,
+                    "metadata": {
+                        "key1": "value1",
+                        "key2": "value2"
+                    },
+                    "version_id": "a1b2c3d4-1234-5678-90ab-cdef12345678",
+                    "is_latest": None,
+                    "is_delete_marker": False
+                }
+            ]
+        }
+    }
+    
+class DocumentObjectPaginationResponse(BaseModel, Generic[T]):
+    items: List[T] = Field(
+        default_factory=list,
+        description="当前页的数据列表",
+        examples=[["示例数据"]]
+    )
+    total: int = Field(..., ge=0, description="总记录数")
+    page: int = Field(..., ge=1, description="当前页码（从1开始）")
+    size: int = Field(..., ge=1, le=100, description="每页记录数")
+    pages: int = Field(..., ge=1, description="总页数")
+    
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "items": [
+                        {
+                            "object_name": "uploads/2025/09/29/71d5efdab3d74f549e3c3f9d3a3d3a3d.pdf",
+                            "last_modified": "2023-01-01T00:00:00Z",
+                            "etag": "123456789abcdef",
+                            "size": 12345,
+                            "metadata": {
+                                "key1": "value1",
+                                "key2": "value2"
+                            },
+                            "version_id": "a1b2c3d4-1234-5678-90ab-cdef12345678",
+                            "is_latest": None,
+                            "is_delete_marker": False
+                        }
+                    ],
+                    "total": 20,
+                    "page": 1,
+                    "size": 10,
+                    "pages": 2,   
+                }
+            ]
+        },
+        "extra": "forbid",  # 严格模式，禁止额外字段
+        "validate_default": True,  # 验证默认值
+    }

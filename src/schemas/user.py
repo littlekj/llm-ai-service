@@ -2,6 +2,7 @@ from pydantic import BaseModel, EmailStr, Field
 from typing import Annotated
 from datetime import datetime
 from enum import Enum
+from uuid import UUID
 
 
 # 强制密码 8-128 位，避免弱口令
@@ -28,7 +29,7 @@ class UserRole(str, Enum):
   
 class UserResponse(BaseModel):
     """用户响应模型（返回给客户端）"""
-    id: int
+    id: UUID
     username: str
     email: EmailStr    # 自动校验 email 格式
     role: UserRole
