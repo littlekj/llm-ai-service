@@ -1,4 +1,4 @@
-from fastapi import Request, status
+from fastapi import Request, status, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 from sqlalchemy.exc import SQLAlchemyError, IntegrityError, OperationalError
@@ -29,7 +29,7 @@ def sanitize_error_for_production(error: str, exc_type: str) -> str:
 
 async def base_app_exception_handler(request: Request, exc: BaseAppException):
     """处理自定义业务异常"""
-    request_id_ctx_var.get()
+    request_id = request_id_ctx_var.get()
     
     logger.error(
         f"Business exception: {exc.error_code} - {exc.message}",
@@ -59,8 +59,8 @@ async def sqlalchemy_exception_handler(request: Request, exc: SQLAlchemyError):
     # 区分不同类型的数据库错误
     if isinstance(exc, IntegrityError):
         logger.warning(
-            f"Database integrity error: {str(exc)}",
-            extra={"request_id": request_id, "path": str(request.url)}
+            f"Database integrity error: {str(exc)}", exc_info=True,
+            extra={"path": str(request.url)}
         )
         return JSONResponse(
             status_code=status.HTTP_409_CONFLICT,
@@ -71,25 +71,17 @@ async def sqlalchemy_exception_handler(request: Request, exc: SQLAlchemyError):
         )
     
     elif isinstance(exc, OperationalError):
-        logger.error(
-            f"Database connection error: {str(exc)}",
-            extra={"request_id": request_id},
-            exc_info=True
-        )
+        logger.error(f"Database operational error: {str(exc)}", exc_info=True)
         return JSONResponse(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             content={
-                "error_code": ErrorCode.DATABASE_ERROR,
+                "error_code": ErrorCode.DATABASE_UNAVAILABLE,
                 "message": "Database temporarily unavailable",
             }
         )
     
     # 其他数据库错误
-    logger.error(
-        f"Unexpected database error: {type(exc).__name__}",
-        extra={"request_id": request_id},
-        exc_info=True
-    )
+    logger.error(f"Unexpected database error: {type(exc).__name__}", exc_info=True)
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         content={
@@ -171,10 +163,32 @@ async def global_exception_handler(request: Request, exc: Exception):
     )
 
 
+async def http_exception_passthrough_handler(request: Request, exc: HTTPException):
+    """直接透传由应用抛出的 HTTPException，并标准化响应结构"""
+    request_id = request_id_ctx_var.get()
+    # detail 可能是 str 或 dict
+    detail = exc.detail if isinstance(exc.detail, (str, dict)) else str(exc.detail)
+    logger.warning(
+        f"HTTP exception: {exc.status_code}",
+        extra={
+            "path": str(request.url),
+            "method": request.method,
+        }
+    )
+    payload = {"message": detail, "request_id": request_id}
+    # 若 detail 本身包含 error_code，则透传；否则给个通用编码
+    if isinstance(detail, dict) and "error_code" in detail:
+        payload.setdefault("error_code", detail.get("error_code"))
+    else:
+        payload.setdefault("error_code", "HTTP_ERROR")
+    return JSONResponse(status_code=exc.status_code, content=payload)
+
+
 def register_exception_handlers(app):
     """注册所有异常处理器"""
     from minio.error import S3Error
     
+    app.add_exception_handler(HTTPException, http_exception_passthrough_handler)
     app.add_exception_handler(BaseAppException, base_app_exception_handler)
     app.add_exception_handler(SQLAlchemyError, sqlalchemy_exception_handler)
     app.add_exception_handler(S3Error, s3_exception_handler)

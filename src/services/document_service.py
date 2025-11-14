@@ -9,6 +9,7 @@ from fastapi import UploadFile, HTTPException
 from fastapi import Depends, Query
 from sqlalchemy.orm import Session
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.exc import SQLAlchemyError, IntegrityError
 from pathlib import Path
 from datetime import datetime
 from typing import Optional, List, Dict
@@ -39,6 +40,7 @@ from src.core.errors import (
     FileValidationError,
     StorageServiceError,
     DatabaseError,
+    NotFoundError,
     TaskQueueError,
     ErrorCode,
 )
@@ -182,62 +184,65 @@ class DocumentService:
             while chunk := await upload_file.read(8192):
                 await f.write(chunk)
         
-        
-        
     async def list_documents(
         self,
         db: AsyncSession,
         user: User,
-        page: int = Query(1, ge=1),           # 默认从第一页开始
-        size: int = Query(10, ge=1, le=100),  # 默认每页显示10条，限制最大值，防滥用
+        page: int,
+        size: int,
     ) -> tuple[List[DocumentResponse], int]:
         """
         列出用户的所有文档
         """
-        skip = (page - 1) * size
-        
         try:
             items, total = await self.document_crud.get_multi_by_user_async(
                 db=db, 
                 user_id=user.id, 
-                skip=skip, 
-                limit=size
+                page=page,
+                size=size
             )
-            
             # 将 ORM 模型转换为 Pydantic 响应模型
             items = [DocumentResponse.model_validate(item) for item in items]
             
             return items, total
-
+        
+        except SQLAlchemyError:
+            raise 
         except Exception as e:
             logger.error(f"Error listing documents for user {user.id}: {e}", exc_info=True)
-            raise
+            raise DatabaseError(
+                message="Database error during listing documents",
+                error_code=ErrorCode.DATABASE_ERROR,
+            ) from e
         
     async def list_documents_with_soft_deleted(
         self,
         db: AsyncSession,
-        page: int = Query(1, ge=1),           # 默认从第一页开始
-        size: int = Query(10, ge=1, le=100),  # 默认每页显示10条，限制最大值，防滥用
+        page: int,
+        size: int,
     ) -> tuple[List[DocumentResponse], int]:
         """
         列出所有软删除的文档
         """
-        skip = (page - 1) * size
-        
         try:
             items, total = await self.document_crud.get_multi_with_soft_deleted_async(
                 db=db,
-                skip=skip,
-                limit=size,
+                page=page,
+                size=size,
             )
-            
             # 将 ORM 模型转换为 Pydantic 响应模型
             items = [DocumentResponse.model_validate(item) for item in items]
             
             return items, total
+        
+        except SQLAlchemyError:
+            raise
         except Exception as e:
             logger.error(f"Error listing documents with soft deleted: {e}", exc_info=True)
-            raise
+            raise DatabaseError(
+                message="Database error during listing documents with soft deleted",
+                error_code=ErrorCode.DATABASE_ERROR,
+            ) from e
         
     async def get_document_by_id(
         self,
@@ -247,7 +252,15 @@ class DocumentService:
     ) -> DocumentResponse:
         """根据 ID 获取文档"""
         db_doc = await self.document_crud.get_by_id_async(db, doc_id, user.id)
-        return  DocumentResponse.model_validate(db_doc)
+            
+        if not db_doc:
+            raise NotFoundError(
+                message="Document not found", error_code=ErrorCode.RECORD_NOT_FOUND,
+                details={"doc_id": str(doc_id)}
+            )
+
+        return DocumentResponse.model_validate(db_doc)
+        
         
     async def soft_delete_document_by_id(
         self,
@@ -305,18 +318,23 @@ class DocumentService:
         user: User,
     ):
         try:
+            result = permanent_delete_document_task.delay(
+                doc_id=doc_id,
+                user_id=user.id
+            )
             
-            result = permanent_delete_document_task.delay(user.id, doc_id)
+            logger.info("Permanent delete document task submitted")
             
             return {
                 "status": result.state,
                 "task_id": result.id,
-                "message": "Document deletion task scheduled"
+                "message": result.result or "Document permanent deletion task scheduled"
             }
-        
+            
         except Exception as e:
-            logger.error(f"Failed to permanently delete document: {e}", exc_info=True)
+            logger.error(f"Failed to permanently delete document {doc_id}: {e}", exc_info=True)
             raise
+        
         
     async def permanently_delete_from_s3(
         self,
@@ -361,11 +379,12 @@ class DocumentService:
             }
         
         except Exception as e:
-            logger.error(f"Failed to list objects from S3: {e}", exc_info=True)
+            logger.error(f"Failed to list objects from S3: {str(e)}", exc_info=True)
             raise TaskQueueError(
                 message="Failed to schedule S3 list objects task",
                 error_code=ErrorCode.TASK_QUEUE_ERROR
             ) from e
+
         
     async def get_document_stream(
         self,
@@ -381,15 +400,19 @@ class DocumentService:
                 headers={"request_id": request_id_ctx_var.get()},
             )
             
-            result = task.get(timeout=30)
+            result = task.get(timeout=300)
             if not result or not result.get("content"):
-                raise ValueError("Failed to retrieve document content")
+                raise NotFoundError(
+                   message="Document content not found",
+                   error_code=ErrorCode.RECORD_NOT_FOUND,
+                    details={"doc_id": str(doc_id)},
+                )
             
+            # 准备文件流
             filename = result["filename"]
             file_content = BytesIO(result["content"])
-            
             content_type = result.get("content_type", "application/octet-stream")
-            
+                
             # 使用 BackgroundTasks 确保响应完成后关闭文件流
             background_tasks.add_task(file_content.close)
             
@@ -401,10 +424,16 @@ class DocumentService:
                     "Content-Disposition": f'attachment; filename="{filename}"'
                 }
             )
-            
+        
+        except NotFoundError:
+            raise  # 直接抛出业务异常
+        except TimeoutError:
+            logger.error(f"Download task timeout for document {doc_id}")
+            raise HTTPException(status_code=504, detail="Download task timeout")
         except Exception as e:
-            logger.error(f"Error scheduling download task for document {doc_id}: {e}", exc_info=True)
-            raise
+            logger.error(f"Unexpected error during download document {doc_id}: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail="Unexpected error during download document")
+        
         
     async def generate_download_url(
         self, 
@@ -416,11 +445,11 @@ class DocumentService:
         """获取文档的预签名下载链接"""
         try:
             # 权限校验和获取文档元信息
-            document_crud = DocumentCRUD()
-            doc = await document_crud.get_by_id_async(db, doc_id, user_id)
+            doc = await self.document_crud.get_by_id_async(db, doc_id, user_id)
             if not doc:
                 raise HTTPException(status_code=404, detail="Document not found or already deleted")
             
+            # 生成预签名链接
             minio_client = get_minio_client()
             presigned_url = minio_client.get_presigned_url(
                 object_name=doc.storage_key,
@@ -443,8 +472,9 @@ class DocumentService:
                 "content_type": doc.content_type,
             }
         
-        except HTTPException:
-            raise    
+        except ValueError as e:
+            logger.warning(f"Invalid parameters for generating download URL: {str(e)}", exc_info=True)
+            raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:
-            logger.error(f"Error scheduling download URL task for document {doc_id}: {e}", exc_info=True)
+            logger.error(f"Failed to generate download URL for document {doc_id}: {str(e)}", exc_info=True)
             raise HTTPException(status_code=500, detail="Failed to generate download URL")

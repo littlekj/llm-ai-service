@@ -1,6 +1,6 @@
 from celery import Celery
-from redis import ConnectionPool
-import os
+from redis import Redis
+from redis.connection import ConnectionPool
 import logging, logging.config
 import platform
 import multiprocessing
@@ -28,6 +28,7 @@ DEFAULT_CONCURRENCY = settings.CELERY_WORKER_CONCURRENCY or max(1, multiprocessi
 #     retry_on_timeout=True,
 #     health_check_interval=30,  # 每30秒检查连接健康
 # )
+
 
 # 创建Celery实例
 celery_app = Celery(

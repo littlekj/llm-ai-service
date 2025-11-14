@@ -1,5 +1,3 @@
-import uuid
-import shutil
 from pathlib import Path
 from fastapi import APIRouter, UploadFile, File, Depends
 from fastapi import Query
@@ -66,19 +64,17 @@ async def list_documents(
     """
     获取当前用户的文档列表
     """
-    try:
-        items, total = await document_service.list_documents(
-            db=db,
-            user=current_user,
-            page=page,
-            size=size
-        )
-        
-        return create_pagination_response(items, total, page, size)
+    logger.info("List documents request", extra={"user_id": str(current_user.id)})
+  
+    items, total = await document_service.list_documents(
+        db=db,
+        user=current_user,
+        page=page,
+        size=size
+    )
     
-    except Exception as e:
-        logger.error(f"Failed to list documents: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+    return create_pagination_response(items, total, page, size)
+
 
 @router.get("/soft-deleted", response_model=PaginationResponse[DocumentResponse])
 async def list_documents_with_soft_deleted(
@@ -87,45 +83,37 @@ async def list_documents_with_soft_deleted(
     size: int = Query(10, ge=1, le=100),  # 默认每页显示10条，限制最大值，防滥用
     document_service: DocumentService = Depends(get_document_service),
 ):
-    try:
-        items, total = await document_service.list_documents_with_soft_deleted(
-            db=db,
-            page=page,
-            size=size,
-        )
-        
-        return create_pagination_response(items, total, page, size)
-        
-    except Exception as e:
-        logger.error(f"Failed to list documents with soft deleted: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+    """列出所有软删除的文档"""
+    logger.info("List documents with soft deleted request")
+    
+    items, total = await document_service.list_documents_with_soft_deleted(
+        db=db,
+        page=page,
+        size=size,
+    )
+    
+    logger.info(f"List documents with soft deleted processed: {total} items found")
+    
+    return create_pagination_response(items, total, page, size)
 
 # response_model=DocumentObjectPaginationResponse[DocumentObjectResponse]
 @router.get("/objects")
 async def list_objects_from_s3(
-    # db: AsyncSession = Depends(get_async_session),
-    current_user: User = Depends(get_current_user),
     prefix: Optional[str] = Query(None, description="S3 object prefix"),
-    # page: int = Query(1, ge=1),  # 默认从第一页开始
-    # size: int = Query(10, ge=1, le=100),  # 默认每页显示10条，限制最大值，防滥用
     document_service: DocumentService = Depends(get_document_service),
 ):
-    if not current_user or not current_user.id:
-        raise HTTPException(status_code=401, detail="Unauthorized")
-    logger.info(f"Listing objects from S3 for user {current_user.id}")
-    try:
-        # items, total = await document_service.list_objects_from_s3(prefix)
+    """列出 S3 存储中的对象列表"""
+    logger.info(f"Listing objects from S3 with prefix: {prefix}")
+    
+    # items, total = await document_service.list_objects_from_s3(prefix)
         
         # return create_pagination(
         #     items, total, page, size, 
         #     response_model=DocumentObjectPaginationResponse[DocumentObjectResponse]
         # )
         
-        return await document_service.list_objects_from_s3(prefix)
-    
-    except Exception as e:
-        logger.error(f"Failed to list objects from S3: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+    return await document_service.list_objects_from_s3(prefix)
+
 
 @router.get("/{doc_id}", response_model=DocumentResponse)
 async def get_document_by_id(
@@ -135,17 +123,14 @@ async def get_document_by_id(
     document_service: DocumentService = Depends(get_document_service)
 ):
     """获取指定文档的详细信息"""
-    try:
-        doc = await document_service.get_document_by_id(db, doc_id, current_user)
+    logger.info("Get document by ID request", extra={"doc_id": str(doc_id)})
     
-        if not doc:
-            raise HTTPException(status_code=404, detail="Document not found or already deleted")
-        return doc
+    doc = await document_service.get_document_by_id(db, doc_id, current_user)
     
-    except Exception as e:
-        logger.error(f"Failed to get document {doc_id}: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
-    
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found or already deleted")
+    return doc
+
 
 @router.delete("/{doc_id}")
 async def remove_document(
@@ -154,16 +139,10 @@ async def remove_document(
     current_user: User = Depends(get_current_user),
     document_service: DocumentService = Depends(get_document_service)
 ):
+    logger.info("Soft delete document request", extra={"doc_id": str(doc_id)})
     
-    result = await document_service.soft_delete_document_by_id(db, doc_id, current_user)
-    
-    if not result:
-        raise HTTPException(status_code=404, detail="Document not found or not authorized")
-    
-    return {
-        "doc_id": doc_id,
-        "message": "Document soft deletion processed",
-    }
+    return await document_service.soft_delete_document_by_id(db, doc_id, current_user)
+
 
 @router.put("/{doc_id}")
 async def restore_document(
@@ -172,18 +151,10 @@ async def restore_document(
     current_user: User = Depends(get_current_user),
     document_service: DocumentService = Depends(get_document_service),
 ):
-    if not current_user or not current_user.id:
-        raise HTTPException(status_code=401, detail="Unauthorized")
+    logger.info("Restore document request", extra={"doc_id": str(doc_id)})
     
-    result = await document_service.restore_document_by_id(db, doc_id, current_user)
-    
-    if not result:
-        raise HTTPException(status_code=404, detail="Document not found or not authorized")
-    
-    return {
-        "doc_id": doc_id,
-        "message": "Document restoration processed",
-    }
+    return await document_service.restore_document_by_id(db, doc_id, current_user)
+
     
 @router.delete("/permanently/{doc_id}")
 async def permanently_delete_document(
@@ -192,18 +163,10 @@ async def permanently_delete_document(
     current_user: User = Depends(get_current_user),
     document_service: DocumentService = Depends(get_document_service),
 ):
-    if not current_user or not current_user.id:
-        raise HTTPException(status_code=401, detail="Unauthorized")
+    logger.info("Permanently delete document request", extra={"doc_id": str(doc_id)})
     
-    result = await document_service.permanently_delete_document_by_id(db, doc_id, current_user)
+    return await document_service.permanently_delete_document_by_id(db, doc_id, current_user)
     
-    if not result:
-        raise HTTPException(status_code=404, detail="Document not found or not authorized")
-    
-    return {
-        "doc_id": doc_id,
-        "message": "Document permanently deletion processed",
-    }
     
 @router.delete("/permanently/s3/{storage_key:path}")
 async def permanently_delete_from_s3(
@@ -219,21 +182,8 @@ async def permanently_delete_from_s3(
     request_id = request_id_ctx_var.get()
     logger.info(f"[{request_id}] Attempting to permanently delete document: {storage_key}")
     
-    if not current_user or not current_user.id:
-        logger.warning(f"Unauthorized deletion attempt for storage key {storage_key}")
-        raise HTTPException(status_code=401, detail="Unauthorized")
+    return await document_service.permanently_delete_from_s3(current_user, storage_key)
 
-    try:
-        result = await document_service.permanently_delete_from_s3(current_user, storage_key)
-        if not result:
-            raise HTTPException(status_code=404, detail="Document not found or not authorized")
-        return {
-            "storage_key": str(storage_key),
-            "message": "Document permanently deletion processed from S3",
-        }
-    except Exception as e:
-        logger.error(f"Error deleting file from S3: {e}")
-        raise HTTPException(status_code=500, detail="Error deleting file from S3")
    
 @router.get("/{doc_id}/download") 
 async def download_document(
@@ -243,25 +193,16 @@ async def download_document(
     current_user: User = Depends(get_current_user),
     document_service: DocumentService = Depends(get_document_service), 
 ):
-    try:
-        # 校验用户身份
-        if not current_user or not current_user.id:
-            raise HTTPException(status_code=401, detail="Unauthorized")
-        
-        # 获取文件流
-        return await document_service.get_document_stream(
-            db=db,
-            user_id=current_user.id,
-            doc_id=doc_id,
-            background_tasks=background_tasks
-        )
-        
-    except ValueError as e:
-        logger.warning(f"Download validation error: {str(e)}")
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        logger.error(f"Unexpected error during download document {doc_id}: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Unexpected error during download document")
+    """下载文档"""
+    
+    logger.info("Download document request", extra={"doc_id": str(doc_id)})
+    
+    return await document_service.get_document_stream(
+        db=db,
+        user_id=current_user.id,
+        doc_id=doc_id,
+        background_tasks=background_tasks
+    )
     
 @router.get("/{doc_id}/download-url")
 async def get_document_download_url(
@@ -270,18 +211,13 @@ async def get_document_download_url(
     current_user: User = Depends(get_current_user),
     document_service: DocumentService = Depends(get_document_service),
 ):
-    try:
-        # 获取预签名下载链接
-        return await document_service.generate_download_url(
-            db=db,
-            user_id=current_user.id,
-            doc_id=doc_id, 
-            expires_in=3600
-        )
+    """获取文档的预签名下载链接"""
+    logger.info("Get document download URL request", extra={"doc_id": str(doc_id)})
+    
+    return await document_service.generate_download_url(
+        db=db,
+        user_id=current_user.id,
+        doc_id=doc_id, 
+        expires_in=3600
+    )
         
-    except ValueError as e:
-        logger.warning(f"Get download URL validation error: {str(e)}")
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        logger.error(f"Unexpected error during get download URL for document {doc_id}: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Unexpected error during get download URL")

@@ -34,15 +34,6 @@ async def attach_session(
     - 如果用户已登录，则将游客会话绑定到该用户
     - 如果用户未登录，则返回 401 错误
     """
-    # logger.info(f"Starting session attach request for user_id: {current_user.id}")
-    
-    # # 验证 guest_session_id 是否存在
-    # if not guest_session_id:
-    #     logger.error("Guest session ID is missing")
-    #     raise HTTPException(status_code=400, detail="Guest session ID is required")
-    if not current_user:
-        logger.error("User is not authenticated")
-        raise HTTPException(status_code=401, detail="User is not authenticated")
     logger.info(f"Attempting to attach guest session to current user")
     
     try:
@@ -57,20 +48,7 @@ async def attach_session(
     except Exception as e:
         logger.error(f"Unexpected error during attach session: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error")
-        
-    #     if result:
-    #         logger.info(f"Successfully attached session {session_id} to user {current_user.id}")
-    #         return {"message": "Session attached successfully"}
-    #     else:
-    #         logger.warning(f"Failed to attach session {session_id} to user {current_user.id}")
-    #         raise HTTPException(status_code=404, detail="Session not found")
-        
-    # except ValueError as e:
-    #     logger.error(f"Invalid session ID format: {guest_session_id}")
-    #     raise HTTPException(status_code=400, detail=str(e))
-    # except Exception as e:
-    #     logger.error(f"Unexpected error during attach session: {str(e)}")
-    #     raise HTTPException(status_code=500, detail="Internal server error")
+
 
 @router.get("/sessions", response_model=List[SessionResponse])
 async def list_sessions(

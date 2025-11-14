@@ -7,6 +7,7 @@ from minio.error import S3Error, ServerError, InvalidResponseError
 from requests.exceptions import ConnectionError, Timeout, RequestException
 # 或
 # from urllib3.exceptions import ConnectionError, NewConnectionError
+from sqlalchemy.exc import SQLAlchemyError
 
 import hashlib
 import uuid
@@ -49,7 +50,7 @@ def parse_iso_datetime(s: str) -> datetime:
     bind=True,
     max_retries=3,
     default_retry_delay=60,
-    autoretry_for=(ConnectionError, Timeout),  # 自动重试网络错误
+    # autoretry_for=(ConnectionError, Timeout),  # 自动重试网络错误
     retry_backoff=True,  # 指数退避
     soft_time_limit=120,  # 软超时
     time_limit=150,  # 硬超时                 
@@ -658,9 +659,9 @@ def restore_document_task(self, doc_id: UUID, user_id: UUID, version_id: str):
                     version_id=last_version,
                 )
                 logger.info(f"Document {doc_id} restored in DB")
-            except Exception as e:
+            except SQLAlchemyError as e:
                 db_session.rollback()
-                logger.error(f"Failed to update DB after MinIO restore: {e}")
+                logger.error(f"Failed to update DB after MinIO restore: {e}", exc_info=True)
                 raise
             
             result = {
@@ -682,7 +683,10 @@ def restore_document_task(self, doc_id: UUID, user_id: UUID, version_id: str):
             logger.info(f"Restore task completed for document {doc_id}")
             
             return result
-        
+    
+    except SQLAlchemyError as db_exc:
+        logger.error(f"Database error during restore document: {db_exc}", exc_info=True)
+        raise    
     except (ConnectionError, Timeout) as retry_exc:
         logger.warning(f"[Retry {self.request.retries + 1}/{self.max_retries}]: {retry_exc}")
         if self.request.retries < self.max_retries:
@@ -695,11 +699,12 @@ def restore_document_task(self, doc_id: UUID, user_id: UUID, version_id: str):
         raise
     except Exception as exc:
         # self.update_state(state='FAILURE', meta={'reason': str(exc)})
-        logger.error(f"Unexpected error during restore: {exc}")
+        logger.error(f"Unexpected error during restore: {exc}", exc_info=True)
         raise
 
+
 @celery_app.task(bind=True, max_retries=3, default_retry_delay=30)
-def permanent_delete_document_task(self, user_id: UUID, doc_id: UUID):
+def permanent_delete_document_task(self, doc_id: UUID, user_id: UUID):
     """
     永久删除文档：从 MinIO 删除对象，并更新数据库
     """
@@ -717,6 +722,7 @@ def permanent_delete_document_task(self, user_id: UUID, doc_id: UUID):
                 logger.error(f"Document has no storage key: id={db_doc.id}, user_id={user_id}")
                 raise
             storage_key = db_doc.storage_key
+            logger.info(f"Document found: id={db_doc.id}, storage_key={storage_key}")
             # 从 MinIO 永久删除对象
             minio_client.permanent_delete_document(object_name=storage_key)
             logger.info(f"MinIO permanent delete successful for document {db_doc.id}")
@@ -978,16 +984,13 @@ def download_document_task(self, user_id: UUID, doc_id: UUID):
             content_type = None
             headers = getattr(response, "headers", {})
             
-            try:
-                if hasattr(headers, "get"):
-                    content_type = headers.get("content-type") or headers.get("Content-Type")
-                else:
-                    # fallback: 判断 getheader 对象是否可调用
-                    getheader = getattr(response, "getheader", None)
-                    if callable(getheader):
-                        content_type = getheader("content-type") or getheader("Content-Type")
-            except Exception as e:
-                pass
+            if hasattr(headers, "get"):
+                content_type = headers.get("content-type") or headers.get("Content-Type")
+            else:
+                # fallback: 判断 getheader 对象是否可调用
+                getheader = getattr(response, "getheader", None)
+                if callable(getheader):
+                    content_type = getheader("content-type") or getheader("Content-Type")
             
             # 如果未找到内容类型，尝试使用文件扩展名猜测
             if not content_type:

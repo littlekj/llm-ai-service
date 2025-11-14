@@ -54,28 +54,18 @@ class DocumentCRUD:
         :param user_id: 用户 ID
         :return: 返回文档对象，如果不存在则返回 None
         """
-        try:
-            stmt = select(Document).where(
-                Document.id ==id,
-                Document.user_id == user_id,
-                Document.is_deleted == False,
-                Document.deleted_at.is_(None)
-            )
-            logger.debug(f"Executinig get_by_id_async query: id={id}, user_id={user_id}")
-            result = await db.execute(stmt)
-            db_doc = result.scalar_one_or_none()
+        stmt = select(Document).where(
+            Document.id ==id,
+            Document.user_id == user_id,
+            Document.is_deleted == False,
+            Document.deleted_at.is_(None)
+        )
+        logger.debug(f"Executinig get_by_id_async query: id={id}, user_id={user_id}")
+        result = await db.execute(stmt)
+        db_doc = result.scalar_one_or_none()
+        
+        return db_doc
             
-            if db_doc is None:
-                logger.info(f"Document not found or already deleted: id={id}")
-                
-            return db_doc
-    
-        except SQLAlchemyError as e:
-            logger.error(f"Database query error: id={id}, error={str(e)}", exc_info=True)
-            raise
-        except Exception as e:
-            logger.error(f"Unexpected query error: id={id}, error={str(e)}", exc_info=True)
-            raise
         
     def get_record_include_soft_delete(
         self,
@@ -84,22 +74,14 @@ class DocumentCRUD:
         user_id: UUID
     ) -> Optional[Document]:
         """根据 ID 获取文档（包含软删除）"""
-        try:
-            stmt = select(Document).where(
-                Document.id == id,
-                Document.user_id == user_id
-            )
-            result = db.execute(stmt)
-            db_doc = result.scalar_one_or_none()
-            
-            return db_doc
+        stmt = select(Document).where(
+            Document.id == id,
+            Document.user_id == user_id
+        )
+        result = db.execute(stmt)
+        db_doc = result.scalar_one_or_none()
         
-        except SQLAlchemyError as e:
-            logger.error(f"Database query error: {e}", exc_info=True)
-            raise ValueError(f"Failed to retrieve the document") from e
-        except Exception as e:
-            logger.error(f"Unexpected query error: {e}", exc_info=True)
-            raise
+        return db_doc
         
     def get_by_checksum_and_user(
         self,
@@ -119,77 +101,71 @@ class DocumentCRUD:
 
         return doc
     
-    def get_multi_by_user(
-        self,
-        db: Session,
-        user_id: UUID,
-        skip: int = 0,
-        limit: int = 20
-    ) -> Tuple[List[Document], int]:
-        """
-        分页查询用户文档列表
-        """
-        # 查询数据
-        query = db.query(Document).filter(
-            Document.user_id == user_id,
-            Document.is_deleted == False,
-            Document.deleted_at.is_(None)
-        )
-        total = query.count()
-        items = query.offset(skip).limit(limit).all()
-        return list(items), total
-    
     async def get_multi_by_user_async(
         self,
         db: AsyncSession,
         user_id: UUID,
-        skip: int = 0,
-        limit: int = 20
-    ) -> Tuple[List[Document], int]:
+        page: int,
+        size: int
+    ):
         """
-        分页查询用户文档列表
+        # 分页查询用户文档列表
         :param db: 异步数据库会话
         :param user_id: 用户 ID
-        :param skip: 跳过记录数
-        :param limit: 每页记录数
+        :param page: 页码（从 1 开始）
+        :param size: 每页记录数
         :return: 返回文档列表和总记录数的元组
         """
-        # 查询数据
-        stmt = select(Document).where(
-            Document.user_id == user_id,
-            Document.is_deleted == False,
-            Document.deleted_at.is_(None)
-        ).offset(skip).limit(limit).order_by(Document.created_at.desc())  # 分页和排序
-        result = await db.execute(stmt)
-        
-        # 返回文档列表：Sequence[Document] 类型
-        items = result.scalars().all()  
-        
-        # 查询总数
-        count_stmt = select(func.count()).where(
-            Document.user_id == user_id,
-            Document.is_deleted == False,
-            Document.deleted_at.is_(None)
+        offset = (page - 1) * size
+
+        # 查询数据语句
+        stmt = (
+            select(Document)
+            .where(
+                Document.user_id == user_id,
+                Document.is_deleted == False,
+                Document.deleted_at.is_(None)
+            )
+            .offset(offset).limit(size)
+            .order_by(Document.created_at.desc())
         )
-        total_result = await db.execute(count_stmt)
-        total = total_result.scalar_one() 
-    
-        return list(items), total   
+        # 查询总数语句
+        cnt_stmt = (
+            select(func.count())
+            .select_from(Document)
+            .where(
+                Document.user_id == user_id,
+                Document.is_deleted == False,
+                Document.deleted_at.is_(None)
+            )
+        )
+        
+        # 执行数据查询
+        result = await db.execute(stmt)
+        items = result.scalars().all()  # 返回文档列表：Sequence[Document] 类型
+        
+        # 执行总数查询
+        total_result = await db.execute(cnt_stmt)
+        total = total_result.scalar() or 0
+        
+        return list(items), total 
     
     async def get_multi_with_soft_deleted_async(
         self,
         db: AsyncSession,
-        skip: int = 0,
-        limit: int = 20,
+        page: int,
+        size: int,
     ) -> Tuple[List[Document], int]:
         """
         分页查询软删除的文档
         """
+        skip = (page - 1) * size
+        
         # 查询数据
         stmt = select(Document).where(
             Document.is_deleted == True,
             Document.deleted_at.isnot(None)
-        ).offset(skip).limit(limit).order_by(Document.created_at.desc())
+        ).offset(skip).limit(size).order_by(Document.created_at.desc())
         result = await db.execute(stmt)
         
         # 返回文档列表：Sequence[Document] 类型
@@ -206,22 +182,15 @@ class DocumentCRUD:
         id: UUID,
         user_id: UUID,
     ):
-        try:
-            db_doc = db.query(Document).filter(
-                Document.id == id,
-                Document.user_id == user_id,
-                Document.is_deleted == True,
-                Document.deleted_at.isnot(None),
-            ).first()
-            
-            return db_doc
+        db_doc = db.query(Document).filter(
+            Document.id == id,
+            Document.user_id == user_id,
+            Document.is_deleted == True,
+            Document.deleted_at.isnot(None),
+        ).first()
         
-        except SQLAlchemyError as e:
-            logger.error(f"Database query error: id={id}, error={str(e)}", exc_info=True)
-            raise
-        except Exception as e:
-            logger.error(f"Unexpected query error: id={id}, error={str(e)}", exc_info=True)
-            raise
+        return db_doc
+            
     
     async def get_soft_deleted_by_id_async(
         self,
@@ -229,55 +198,38 @@ class DocumentCRUD:
         id: UUID,
         user_id: UUID,
     ):
-        try:
-            stmt = select(Document).where(
-                Document.id == id,
-                Document.user_id == user_id,
-                Document.is_deleted == True,
-                Document.deleted_at.isnot(None)
-            )
-            logger.debug(f"Executing get_soft_deleted_by_id_async query: id={id}, user_id={user_id}")
-            result = await db.execute(stmt)
-            db_doc = result.scalar_one_or_none()
+        stmt = select(Document).where(
+            Document.id == id,
+            Document.user_id == user_id,
+            Document.is_deleted == True,
+            Document.deleted_at.isnot(None)
+        )
+        logger.debug(f"Executing get_soft_deleted_by_id_async query: id={id}, user_id={user_id}")
+        result = await db.execute(stmt)
+        db_doc = result.scalar_one_or_none()
             
-            if db_doc is None:
-                logger.info(f"Document not found in soft deleted state: id={id}")
-                
-            return db_doc
-        
-        except SQLAlchemyError as e:
-            logger.error(f"Database query error: id={id}, error={str(e)}", exc_info=True)
-            raise
-        except Exception as e:
-            logger.error(f"Unexpected query error: id={id}, error={str(e)}", exc_info=True)
-            raise
+        return db_doc
+
         
     async def get_by_doc_id_async(
         self,
         db: AsyncSession,
         id: UUID, 
     ) -> Optional[Document]:
-        try:
-            stmt = select(Document).where(
-                Document.id ==id,
-                Document.is_deleted == False,
-                Document.deleted_at.is_(None)
-            )
-            logger.debug(f"Executinig get_by_id_async query: id={id}")
-            result = await db.execute(stmt)
-            db_doc = result.scalar_one_or_none()
+        stmt = select(Document).where(
+            Document.id ==id,
+            Document.is_deleted == False,
+            Document.deleted_at.is_(None)
+        )
+        logger.debug(f"Executinig get_by_id_async query: id={id}")
+        result = await db.execute(stmt)
+        db_doc = result.scalar_one_or_none()
+        
+        if db_doc is None:
+            logger.info(f"Document not found or already deleted")
             
-            if db_doc is None:
-                logger.info(f"Document not found or already deleted")
-                
-            return db_doc
-    
-        except SQLAlchemyError as e:
-            logger.error(f"Database query error: id={id}, error={str(e)}", exc_info=True)
-            raise
-        except Exception as e:
-            logger.error(f"Unexpected query error: id={id}, error={str(e)}", exc_info=True)
-            raise
+        return db_doc 
+
     
     def create_record_with_user_id(
         self,

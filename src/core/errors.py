@@ -25,8 +25,9 @@ class ErrorCode(str, Enum):
     
     # 数据库操作（4xxx）
     DATABASE_ERROR = "4001"
-    DUPLICATE_ENTRY = "4002"
-    RECORD_NOT_FOUND = "4003"
+    DATABASE_UNAVAILABLE = "4002"
+    DUPLICATE_ENTRY = "4003"
+    RECORD_NOT_FOUND = "4004"
     
     # 任务队列（5xxx）
     TASK_QUEUE_ERROR = "5001"
@@ -52,6 +53,23 @@ class BaseAppException(Exception):
         self.details = details or {}
         super().__init__(self.message)
 
+
+        
+class NotFoundError(BaseAppException):
+    """资源未找到异常类"""
+    def __init__(
+        self,
+        message: str = "Resource not found",
+        error_code: ErrorCode = ErrorCode.RECORD_NOT_FOUND,
+        details: Optional[Dict] = None
+    ):
+        super().__init__(
+            message=message,
+            error_code=error_code,
+            status_code=status.HTTP_404_NOT_FOUND,
+            details=details,
+        )
+        
 
 class FileValidationError(BaseAppException):
     """文件验证异常类"""
@@ -115,3 +133,5 @@ class TaskQueueError(BaseAppException):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             details=details,
         )
+       
+

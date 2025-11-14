@@ -5,6 +5,7 @@ import logging
 from fastapi import Depends
 from typing import Optional, List, Dict, Any
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.exc import SQLAlchemyError
 from uuid import UUID, uuid4
 
 from src.utils.llm_client import LLMClient
@@ -280,21 +281,28 @@ class ChatService:
         chunks: List[Dict[str, Any]],
         document_crud: DocumentCRUD = Depends(get_document_dao),
     ) -> List[SourceReference]:
-       """构建引用源信息"""
-       sources = []
-       for chunk in chunks:
-           metadata = chunk.get("metadata", {})
-           doc_id = metadata.get("document_id")
-           
-           if doc_id:
-               doc = await document_crud.get_by_doc_id_async(db, id=doc_id)
-               if doc:
-                   sources.append({
-                       "document_id": doc.id,
-                       "document_name": doc.filename,
-                       "current_snippet": chunk["content"][:200],
-                       "page_number": metadata.get("page_number"),
-                   })
+        """构建引用源信息"""
+        sources = []
+        for chunk in chunks:
+            metadata = chunk.get("metadata", {})
+            doc_id = metadata.get("document_id")
+        
+            try:
+               if doc_id:
+                doc = await document_crud.get_by_doc_id_async(db, id=doc_id)
+                if doc:
+                    sources.append({
+                        "document_id": doc.id,
+                        "document_name": doc.filename,
+                        "current_snippet": chunk["content"][:200],
+                        "page_number": metadata.get("page_number"),
+                    })
+            
+            except SQLAlchemyError as e:
+                logger.error(f"Database query error for doc_id={str(doc_id)}: error={str(e)}", exc_info=True)
+                raise
+            except Exception as e:
+               logger.error(f"Error building source reference for doc_id={str(doc_id)}: {str(e)}", exc_info=True)
 
-       return sources
+        return sources
         

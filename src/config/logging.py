@@ -31,14 +31,10 @@ class SimpleJsonFormatter(logging.Formatter):
                 "msg", "args", "levelname", "levelno", "name", "pathname", "filename",
                 "module", "exc_info", "exc_text", "stack_info", "lineno", "funcName",
                 "created", "msecs", "relativeCreated", "thread", "threadName",
-                "processName", "process"
+                "processName", "process",
             }:
                 continue
-            try:
-                json.dumps({k: v})
-                payload[k] = v
-            except Exception:
-                payload[k] = repr(v)
+            payload[k] = v
 
         if record.exc_info:
             payload["exception"] = self.formatException(record.exc_info)
