@@ -35,6 +35,7 @@ def send_confirmation_email(to_email: str, confirm_url: str):
     try:
         email = resend.Emails.send(params)
         logger.info(f"Confirmation email sent to {to_email}, id={email.get('id')}")
+        
         return {"success": True, "id": email.get('id')}
     
     except ResendError as e:
@@ -50,8 +51,8 @@ def send_reset_email(to_email: str, reset_url: str):
         logger.warning(
             f"Resend API key not configured. Skipping email to {to_email}.")
         return {"success": False, "error": "API key not configured"}
+    
     resend.api_key = resend_api_key
-
     params: resend.Emails.SendParams = {
         "from": f"Quillnk <{resend_from_email}>",
         "to": [to_email],

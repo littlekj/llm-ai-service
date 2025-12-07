@@ -160,7 +160,7 @@ def _parse_task_result(result: AsyncResult) -> dict:
 @router.get("/{task_id}", response_model=TaskResultResponse)
 async def get_task_result(task_id: str) -> TaskResultResponse:
     """
-    查询任务执行结果
+    查询 Celery 任务的结果
     
     支持的任务类型:
     - upload_document_task: 上传文档
@@ -182,18 +182,70 @@ async def get_task_result(task_id: str) -> TaskResultResponse:
         logger.exception(f"Error retrieving task result for {task_id}: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to retrieve task result")
     
+@router.get("/{chain_id}/progress")
+async def get_task_progress(chain_id: str):
+    """
+    查询 Celery 任务链的进度
+    
+    - 返回任务链中每个任务的状态
+    """
+    task_result = AsyncResult(chain_id, app=celery_app)
+    
+    chain_tasks = []
+    current_task = task_result 
+    
+    while current_task:
+        chain_tasks.append({
+            "task_id": current_task.id,
+            "task_name": current_task.name,
+            "state": current_task.state,
+            "result": current_task.result if current_task.ready() else None
+        })
+        
+        # 获取下一个任务
+        if hasattr(current_task, 'children') and current_task.children:
+            current_task = current_task.children[0]
+        else:
+            break
+    
+    return {
+        "chain_id": chain_id,
+        "overall_status": task_result.state,
+        "tasks": chain_tasks,
+        "progress": {
+            "completed": sum(1 for t in chain_tasks if t["state"] == "SUCCESS"),
+            "total": len(chain_tasks)
+        }
+    }
+    
 @router.delete("/{task_id}")
 async def revoke_task(task_id: str) -> dict:
     """
     撤销正在执行的任务
     """
     try:
-        celery_app.control.revoke(task_id, terminate=True)
-        logger.info(f"Task {task_id} has been revoked")
+        # 检查任务状态
+        task_result = AsyncResult(task_id, app=celery_app)
+        
+        # 如果任务已经是完成状态，则没有必要撤销
+        if task_result.state in ['SUCCESS', 'FAILURE', 'REVOKED']:
+            return {
+                "status": "warning",
+                "message": f"Task chain is already completed with status: {task_result.state}"
+            }
+        
+        # 执行撤销
+        # terminate=True: 强制终止正在运行的任务
+        # signal='SIGKILL': (可选) 如果 SIGTERM 杀不掉，可以使用 SIGKILL
+        celery_app.control.revoke(task_id, terminate=True, signal='SIGKILL')
+        
+        logger.info(f"Task {task_id} revocation command sent")
+        
         return {
             "status": "success",
-            "message": f"Task {task_id} has been revoked"
+            "message": f"Task {task_id} revocation command sent"
         }
+        
     except Exception as e:
         logger.exception(f"Error revoking task {task_id}: {str(e)}")
-        raise HTTPException(status_code=500, detail="Failed to revoke task")
+        raise HTTPException(status_code=500, detail=f"Failed to revoke task: {str(e)}")

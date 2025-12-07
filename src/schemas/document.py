@@ -1,12 +1,12 @@
 from pydantic import BaseModel, Field, computed_field
 from pydantic import field_validator, model_validator
-from typing import Optional, List, Generic, TypeVar, Type
+from typing import Optional, List, Generic, TypeVar, Dict, Any
 from uuid import UUID
 # from enum import Enum as PyEnum
 from datetime import datetime
 from math import ceil
 
-from src.models.document import StorageStatus, ProcessingStatus
+from src.models.document import StorageStatus
 from src.utils.file_validator import sanitize_filename
 
 
@@ -98,23 +98,27 @@ class DocumentUpdate(BaseModel):
     }
     
 
-class DocumentResponse(DocumentBase):
+class DocumentDetailResponse(DocumentBase):
     """
     返回单个文档信息的响应模型
     注意：该模型不包含敏感字段（如 storage_key, checksum, user_id）
     """
     
     id: UUID = Field(..., description="文档 UUID")  # UUID 转换为 str
+    filename: str = Field(..., min_length=1, max_length=255, description="原始文件名")
     size_bytes: int = Field(ge=0, description="文件大小，单位字节")
+    content_type: str = Field(..., max_length=100, description="MIME 类型，如 application/pdf")
+    
+    # 存储信息
     storage_status: StorageStatus = Field(..., description="存储状态")
-    processing_status: ProcessingStatus = Field(..., description="处理状态")
-    error_message: Optional[str] = Field(None, description="错误信息（仅当失败时）")
-    is_deleted: bool = Field(False, description="是否已删除")
-    deleted_at: Optional[datetime] = Field(None, description="删除时间（UTC）")
+    version_id: Optional[str] = Field(None, description="文档版本 ID")
+    
+    # 时间戳
     created_at: datetime = Field(..., description="创建时间（UTC）")
     updated_at: datetime = Field(..., description="最后更新时间（UTC）")
-    version_id: Optional[str] = Field(None, description="文档版本 ID")
-    storage_key: Optional[str] = Field(None, description="MinIO 对象路径")
+    # 软删除
+    is_deleted: bool = Field(False, description="是否已删除")
+    deleted_at: Optional[datetime] = Field(None, description="删除时间（UTC）")
     
     model_config = {
         "from_attributes": True,  # 支持 ORM 模型直接转换为该模型
@@ -126,18 +130,26 @@ class DocumentResponse(DocumentBase):
                     "size_bytes": 12345,
                     "content_type": "application/pdf",
                     "storage_status": "archived",
-                    "processing_status": "success",
-                    "error_message": None,
-                    "is_deleted": False,
-                    "deleted_at": None,
+                    "version_id": None,
                     "created_at": "2023-01-01T00:00:00Z",
                     "updated_at": "2023-01-01T00:00:00Z",
-                    "version_id": None,
+                    "is_deleted": False,
+                    "deleted_at": None,
                 } 
             ]
         }
     }
  
+
+class DocumentProgressResponse(BaseModel):
+    """文档处理进度响应"""
+    stage: str = Field(..., description="当前阶段")
+    status: str = Field(..., description="阶段状态")
+    result: str = Field(..., description="最终结果")
+    progress_details: Dict[str, Any] = Field(default_factory=dict, description="进度详情")
+    error_message: Optional[str] = Field(None, description="错误信息")
+    retry_count: int = Field(default=0, description="重试次数")
+    
 
 class PaginationResponse(BaseModel, Generic[T]):
     """
@@ -170,13 +182,12 @@ class PaginationResponse(BaseModel, Generic[T]):
                             "filename": "example.pdf",
                             "size_bytes": 12345,
                             "content_type": "application/pdf",
-                            "status": "indexed",
-                            "error_message": None,
-                            "is_deleted": False,
-                            "deleted_at": None,
+                            "storage_status": "uploading",
+                            "version_id": None,
                             "created_at": "2023-01-01T00:00:00Z",
                             "updated_at": "2023-01-01T00:00:00Z",
-                            "version_id": None,
+                            "is_deleted": False,
+                            "deleted_at": None,
                         }
                     ],
                     "total": 20,

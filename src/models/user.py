@@ -13,6 +13,8 @@ from src.models import Base
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .document import Document
+    from .document import DocumentJob
+    from .vector_chunk import VectorChunk
     from .chat import ChatSession
     
     
@@ -44,10 +46,10 @@ class User(Base):
     role: Mapped[str] = mapped_column(
        String(20), default=UserRole.USER, server_default=UserRole.USER.value, nullable=False
     )  # 用户角色，默认为"user"
-    quota_tokens: Mapped[int] = mapped_column(Integer, default=10000, nullable=False)  # 用户配额，默认为10000
+    quota_tokens: Mapped[int] = mapped_column(Integer, default=1000000, nullable=False)  # 用户配额，默认为1000000
     used_tokens: Mapped[int] = mapped_column(Integer, default=0, nullable=False)  # 用户已使用配额，默认为0
     refresh_token: Mapped[str] = mapped_column(String(1024), nullable=True)  # 存放最新的 Refresh Token
-    is_active: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)  # 用户是否激活，默认为True
+    is_active: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)  # 用户是否激活
     is_deleted: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)  # 软删除标志
     # 邮箱确认时间（用于标记用户已确认邮箱）
     email_confirmed_at: Mapped[Optional[datetime]] = mapped_column(
@@ -78,6 +80,20 @@ class User(Base):
         back_populates="user",  # 反向引用属性名
         cascade="all, delete-orphan",  # 级联删除其关联的文档
         passive_deletes=True  # 激活被动删除
+    )
+    
+    jobs: Mapped[List["DocumentJob"]] = relationship(
+        "DocumentJob",
+        back_populates="user",
+        cascade="all, delete-orphan",
+        passive_deletes=True
+    )
+    
+    vector_chunks: Mapped[List["VectorChunk"]] = relationship(
+        "VectorChunk",
+        back_populates="user",
+        cascade="all, delete-orphan",
+        passive_deletes=True
     )
     
     # 一对多关系：User -> ChatSession

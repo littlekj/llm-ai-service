@@ -1,9 +1,8 @@
 
 from pydantic import BaseModel, Field
-from typing import Optional, Literal, List, Any
+from typing import Optional, Literal, List, Dict, Any
 from datetime import datetime, timezone
 
-from src.schemas.document import DocumentResponse
 
 class TaskStatusEnum:
     """任务状态枚举"""
@@ -14,7 +13,7 @@ class TaskStatusEnum:
     FAILURE = "FAILURE"
     RETRY = "RETRY"
     REVOKED = "REVOKED"
-    
+ 
 class BaseTaskResult(BaseModel):
     """基础任务结果模型"""
     status: str = Field(..., description="当前阶段状态")
@@ -25,6 +24,7 @@ class BaseTaskResult(BaseModel):
 class DocumentInfo(BaseModel):
     """文档基本信息"""
     doc_id: str = Field(..., description="文档 ID")
+    user_id: str = Field(..., description="用户 ID")
     filename: str = Field(..., description="文件名")
     size_bytes: int = Field(..., description="文件大小（字节）")
     content_type: str = Field(..., description="内容类型")
@@ -34,25 +34,25 @@ class UploadTaskResult(BaseTaskResult):
     """上传任务结果"""
     document: DocumentInfo
     storage_status: str = Field(..., description="存储状态")
-    processing_status: str = Field(..., description="处理状态")
-    checksum: str = Field(..., description="文件校验和")
     version_id: Optional[str] = Field(None, description="版本 ID")
     created_at: datetime = Field(..., description="创建时间")
     updated_at: datetime = Field(..., description="更新时间")
+
     
 class DeleteTaskResult(BaseTaskResult):
     """删除任务结果"""
     document: DocumentInfo
+    version_id: Optional[str] = Field(None, description="版本 ID")
     is_deleted: bool = Field(..., description="是否已删除")
     deleted_at: Optional[str] = Field(None, description="删除时间（UTC）")
-    version_id: Optional[str] = Field(None, description="版本 ID")
+    
 
 class RestoreTaskResult(BaseTaskResult):
     """恢复任务结果"""
     document: DocumentInfo
-    restored_at: str = Field(..., description="恢复时间（UTC）")
-    version_id: Optional[str] = Field(None, description="版本 ID")
     storage_status: str = Field(..., description="存储状态")
+    version_id: Optional[str] = Field(None, description="版本 ID")
+    restored_at: str = Field(..., description="恢复时间（UTC）")
     
 class ObjectDetail(BaseModel):
     """对象详情"""
@@ -114,7 +114,7 @@ class TaskResultResponse(BaseModel):
                 "progress": 100,
                 "result": {
                      "status": "success",
-                    "task_id": "abc123def456",
+                     "task_id": "abc123def456",
                      "message": "Document uploaded successfully",
                      "timestamp": "2025-11-11T10:00:00Z",
                 },

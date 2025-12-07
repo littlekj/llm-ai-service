@@ -1,4 +1,4 @@
-# LLM-AI-Service — 生产级 RAG 知识库系统
+# LLM-AI-Service — RAG 知识库系统
 
 > 支持文档上传、智能问答、权限控制、配额管理、审计日志、高可用部署
 

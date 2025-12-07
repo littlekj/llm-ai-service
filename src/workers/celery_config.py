@@ -6,7 +6,7 @@ from datetime import timedelta
 CELERY_BEAT_SCHEDULE = {
     # 每天凌晨2点执行永久删除
     "permanent-delete-daily": {
-        "task": "src.workers.document.process_document.schedule_permanent_deletion_task",
+        "task": "src.workers.document.object_storage.schedule_permanent_deletion_task",
         "schedule": crontab(hour=2, minute=0),  # 每天凌晨2点执行
         "args": (),
         "options": {
@@ -16,7 +16,7 @@ CELERY_BEAT_SCHEDULE = {
     
     # 可选：每6小时执行一次（用于测试或更频繁的清理）
     "permanent-delete-frequent": {
-        "task": "src.workers.document.process_document.schedule_permanent_deletion_task",
+        "task": "src.workers.document.object_storage.schedule_permanent_deletion_task",
         "schedule": timedelta(hours=6),  # 每6小时执行一次
         "args": (),
         "options": {
@@ -50,14 +50,14 @@ CELERY_BEAT_SCHEDULE = {
 
 # 任务路由配置，根据任务类型分配到不同的队列
 CELERY_TASK_ROUTES = {
-    "src.workers.document.process_document._find_expired_documents": {
+    "src.workers.document.object_storage._find_expired_documents": {
         "queue": "query"
     },
-    "src.workers.document.process_document.permanent_delete_document_task": {
+    "src.workers.document.object_storage.permanent_delete_document_task": {
         "queue": "deletion",
         "rate_limit": "10/m"  # 限制删除速率，任务每分钟最多执行10次
     },
-    "src.workers.document.process_document.schedule_permanent_deletion_task": {
+    "src.workers.document.object_storage.schedule_permanent_deletion_task": {
         "queue": "scheduler"
     },
     # 可以使用通配符来匹配多个任务

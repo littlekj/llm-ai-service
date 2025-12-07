@@ -24,11 +24,11 @@ logger = logging.getLogger(__name__)
 class MinioClient:
     def __init__(
         self, 
-        endpoint_url: str, 
-        access_key: str, 
-        secret_key: str, 
-        secure: bool, 
-        bucket_name: str
+        endpoint_url: str = settings.MINIO_ENDPOINT, 
+        access_key: str = settings.MINIO_ROOT_USER, 
+        secret_key: str = settings.MINIO_ROOT_PASSWORD, 
+        secure: bool = settings.MINIO_SECURE, 
+        bucket_name: str = settings.MINIO_BUCKET_NAME
     ):
         """
         初始化 Minio 客户端
@@ -694,15 +694,3 @@ class MinioClient:
         except Exception as e:
             logger.error(f"Unexpected error generating presigned URL: {e}", exc_info=True)
             raise
-
-def get_minio_client() -> MinioClient:
-    """
-    获取配置好的 MinioClient 实例
-    """
-    return MinioClient(
-        endpoint_url=settings.MINIO_ENDPOINT,
-        access_key=settings.MINIO_ROOT_USER,
-        secret_key=settings.MINIO_ROOT_PASSWORD,
-        secure=settings.MINIO_SECURE,
-        bucket_name=settings.MINIO_BUCKET_NAME
-    )

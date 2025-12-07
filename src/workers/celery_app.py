@@ -4,19 +4,32 @@ from redis.connection import ConnectionPool
 import logging, logging.config
 import platform
 import multiprocessing
+import socket
 
 from src.config.settings import settings
 from src.config.logging import logging_config
-from src.middleware.request_id import setup_custom_log_record_factory
+from src.config.logging import setup_log_record_factory
 from src.workers import celery_config
 
-setup_custom_log_record_factory()
+# 安装自定义 LogRecordFactory
+setup_log_record_factory()  
 
 logging_config["root"]["level"] = settings.APP_LOG_LEVEL
 logging.config.dictConfig(logging_config)
 
 IS_WINDOWS = platform.system().lower().startswith("windows")
 DEFAULT_CONCURRENCY = settings.CELERY_WORKER_CONCURRENCY or max(1, multiprocessing.cpu_count() * 2)
+
+def add_health_check(url: str) -> str:
+    """为 Redis URL 添加健康检查参数"""
+    if not url:
+        return url
+    separator = "&" if "?" in url else "?"
+    # 强制每 20 秒检查一次连接健康状况
+    return f"{url}{separator}health_check_interval=10"
+
+broker_url = settings.CELERY_BROKER_URL  # Broker (Kombu): URL 的解析器不支持 health_check_interval 参数
+backend_url = add_health_check(settings.CELERY_RESULT_BACKEND)
 
 # # 创建Redis连接池
 # redis_pool = ConnectionPool(
@@ -33,9 +46,25 @@ DEFAULT_CONCURRENCY = settings.CELERY_WORKER_CONCURRENCY or max(1, multiprocessi
 # 创建Celery实例
 celery_app = Celery(
     "llm_service_worker",
-    broker=settings.CELERY_BROKER_URL,  # 指定消息代理中间件
-    backend=settings.CELERY_RESULT_BACKEND,  # 指定结果存储后端
+    broker=broker_url,    # 消息代理中间件
+    backend=backend_url,  # 结果存储后端
 )
+
+# TCP Keepalive 选项 (Windows 兼容性处理)
+tcp_options = {}
+if hasattr("socket", "TCP_KEEPIDLE"):
+    tcp_options[socket.TCP_KEEPIDLE] = 60
+if hasattr("socket", "TCP_KEEPINTVL"):
+    tcp_options[socket.TCP_KEEPINTVL] = 10
+if hasattr("socket", "TCP_KEEPCNT"):
+    tcp_options[socket.TCP_KEEPCNT] = 3
+    
+# Windows 特有的 IO Control (如果上面的常量无效)
+if IS_WINDOWS and not tcp_options:
+    # Windows 下开启 KeepAlive 的替代方案
+    # 对应: (on_off, keepalivetime, keepaliveinterval)
+    # 开启, 60000ms (60s) 后开始, 每 10000ms (10s) 发一次
+    SIO_KEEPALIVE_VALS = (1, 60000, 10000)
 
 celery_app.conf.update(
     # 设置任务序列化和反序列化方式
@@ -63,20 +92,38 @@ celery_app.conf.update(
         # 'connection_pool': redis_pool
         'visibility_timeout': 3600,  # 任务在队列中的可见性超时，防止任务丢失
         'max_connections': 100,  # 最大连接数
-        "socket_timeout": 30,  # 连接超时
+        "socket_timeout": 10,  # 连接超时
         "socket_connect_timeout": 10,  # 连接建立超时
         'retry_on_timeout': True,  # 超时时自动重试
         'socket_keepalive': True,  # 启用 TCP keepalive
+        'health_check_interval': 10, # 每10秒进行一次健康检查（URL 中的优先级更高且更可靠）
+        # 'socket_keepalive_options': {
+        #     socket.TCP_KEEPIDLE: 60,   # 60 秒后开始发送 keepalive
+        #     socket.TCP_KEEPINTVL: 10,  # 每 10 秒发送一次
+        #     socket.TCP_KEEPCNT: 3,     # 连续 3 次无响应则判断连接死亡
+        # },
+        # 仅在非 Windows 或支持常量的环境下使用 options
+        'socket_keepalive_options': tcp_options if tcp_options else None,
     },
     
     # 结果后端 Redis 连接池配置
     result_backend_transport_options={
-        "socket_timeout": 30,  # 连接超时
+        "socket_timeout": 60,  # 连接超时
         "socket_connect_timeout": 10,  # 连接建立超时
         'retry_on_timeout': True,  # 超时时自动重试
         'socket_keepalive': True,  # 启用 TCP keepalive
-        'health_check_interval': 30,  # 每30秒进行一次健康检查
+        'health_check_interval': 10,  # 每10秒进行一次健康检查（URL 中的优先级更高且更可靠）
+        # 'socket_keepalive_options': {
+        #     socket.TCP_KEEPIDLE: 60,
+        #     socket.TCP_KEEPINTVL: 10,
+        #     socket.TCP_KEEPCNT: 3,
+        # },
+        'socket_keepalive_options': tcp_options if tcp_options else None,
     },
+    
+    # 后端重试
+    result_backend_max_retries=5,
+    result_backend_retry_delay=1,
     
     # 任务确认与丢失保护
     task_acks_late=True,
@@ -129,7 +176,7 @@ celery_app.conf.update(
 
 # 自动发现任务（推荐）
 # celery_app.autodiscover_tasks(["src.workers.user.email_notification"])
-# celery_app.autodiscover_tasks(["src.workers.document.process_document"])
+# celery_app.autodiscover_tasks(["src.workers.document.object_storage"])
 # celery_app.autodiscover_tasks(["src.workers.system.regular_tasks"])
 celery_app.autodiscover_tasks(["src.workers"])  # 在主 workers 包的 __init__.py 中导入所有子模块
 

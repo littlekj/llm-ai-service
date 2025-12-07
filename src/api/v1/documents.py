@@ -7,20 +7,22 @@ from sqlalchemy.orm import Session
 from sqlalchemy.ext.asyncio import AsyncSession
 from uuid import UUID
 from typing import Optional
+from celery import chain
 import logging
 
 from src.models.user import User
-from src.schemas.document import DocumentResponse
+from src.schemas.document import DocumentDetailResponse
 from src.schemas.document import PaginationResponse
-from src.schemas.document import DocumentObjectResponse, DocumentObjectPaginationResponse
 from src.schemas.document import create_pagination_response
 from src.schemas.pagination import create_pagination_response as create_pagination
 from src.core.depends import get_async_session
 from src.core.depends import get_current_user
 from src.core.depends import get_document_service
+from src.crud.document import DocumentCRUD
 from src.services.document_service import DocumentService
 from src.middleware.request_id import request_id_ctx_var
-from src.crud.document import DocumentCRUD
+from src.workers.document.object_storage import upload_document_task
+from src.workers.document.vector_storage import process_document_task
 
 logger = logging.getLogger(__name__)
 
@@ -38,22 +40,66 @@ router = APIRouter(prefix="/documents", tags=["documents"])
 @router.post("/")
 async def upload_document(
     request: Request,
-    file: UploadFile = File(...),
+    upload_file: UploadFile = File(...),
     db: AsyncSession = Depends(get_async_session),
     current_user: User = Depends(get_current_user),
     document_service: DocumentService = Depends(get_document_service),
+    auto_vectorize: bool = Query(default=True, description="是否自动向量化文档"),  # 可选参数
 ):
-    # 上传文档（异常由全局处理器统一处理）
-    logger.info("Document upload request received", extra={"user_id": str(current_user.id)})
+    """
+    上传文档并自动处理
     
-    result = await document_service.upload_document(file, current_user)
+    - 自动执行：文件上传 -> 文本提取 -> 向量化及存储
+    - 返回： 任务 ID（用于轮询进度）
+    """
+    request_id = request_id_ctx_var.get()
+
+    # 上传并处理文档（异常由全局处理器统一处理）
+    logger.info("Document upload request received from user {current_user.id}.")
     
-    logger.info("Document upload processed", extra={"user_id": str(current_user.id)})
+    # 文件预取处理
+    filename, temp_path = await document_service.preprocessing_file(upload_file=upload_file)
     
-    return result
+    if auto_vectorize:
+        # 提交 Celery 任务链
+        upload_sig = upload_document_task.si(
+            user_id=str(current_user.id),
+            filename=filename,
+            temp_path=str(temp_path)
+        )
+        process_sig = process_document_task.s()  # 接收上一个任务的返回值
+        
+        if request_id:
+            headers = {"request_id": request_id}
+            upload_sig.set(headers=headers)
+            process_sig.set(headers=headers)
+            
+        task_chain = chain(upload_sig, process_sig) 
+        result = task_chain.apply_async()
+    
+    else:
+        # 仅上传文档，不自动提取文本和向量化
+        # 设置消息 headers、 routing/queue/eta 等任务选项使用 apply_async(...)
+        result = upload_document_task.apply_async(
+            kwargs={
+                "user_id": str(current_user.id),
+                # "doc_id": str(existing_doc.id) if existing_doc else None,
+                "filename": filename,
+                "temp_path": str(temp_path),
+            },
+            headers={"request_id": request_id} if request_id else None,
+        )
+          
+    logger.info(f"Document process task submitted: {result.id}.")
+    
+    return {
+        "task_id": result.id,
+        "status": result.state,
+        "message": "Document process task submitted in background."        
+    }
 
 
-@router.get("/", response_model=PaginationResponse[DocumentResponse])
+@router.get("/", response_model=PaginationResponse[DocumentDetailResponse])
 async def list_documents(
     db: AsyncSession = Depends(get_async_session),
     current_user: User = Depends(get_current_user),
@@ -76,7 +122,7 @@ async def list_documents(
     return create_pagination_response(items, total, page, size)
 
 
-@router.get("/soft-deleted", response_model=PaginationResponse[DocumentResponse])
+@router.get("/soft-deleted", response_model=PaginationResponse[DocumentDetailResponse])
 async def list_documents_with_soft_deleted(
     db: AsyncSession = Depends(get_async_session),
     page: int = Query(1, ge=1),           # 默认从第一页开始
@@ -115,7 +161,7 @@ async def list_objects_from_s3(
     return await document_service.list_objects_from_s3(prefix)
 
 
-@router.get("/{doc_id}", response_model=DocumentResponse)
+@router.get("/{doc_id}", response_model=DocumentDetailResponse)
 async def get_document_by_id(
     doc_id: UUID,
     db: AsyncSession = Depends(get_async_session),
@@ -127,8 +173,6 @@ async def get_document_by_id(
     
     doc = await document_service.get_document_by_id(db, doc_id, current_user)
     
-    if not doc:
-        raise HTTPException(status_code=404, detail="Document not found or already deleted")
     return doc
 
 
@@ -220,4 +264,3 @@ async def get_document_download_url(
         doc_id=doc_id, 
         expires_in=3600
     )
-        

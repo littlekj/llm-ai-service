@@ -102,15 +102,18 @@ async def prometheus_metrics(response: Response, db: AsyncSession = Depends(get_
         # 从数据库获取基础统计数据
         total_users = int((await db.execute(select(func.count()).select_from(User))).scalar() or 0)
         active_users = int((await db.execute(select(func.count()).select_from(User).where(User.is_active == True))).scalar() or 0)
+        active_rate = float(round(active_users / total_users * 100, 2)) if total_users > 0 else 0.0
 
         # 创建 Gauge 类型的指标
         g_total = Gauge("llm_total_users", "Total users", registry=registry)
         g_active = Gauge("llm_active_users", "Active users", registry=registry)
+        g_active_rate = Gauge("llm_active_user_rate", "Active user rate percentage", registry=registry)
 
         # 设置指标值
         g_total.set(total_users)
         g_active.set(active_users)
-
+        g_active_rate.set(active_rate)
+        
         # 生成 Prometheus 格式的输出
         output = generate_latest(registry)
         response.headers["Content-Type"] = prometheus_client.CONTENT_TYPE_LATEST
@@ -122,6 +125,7 @@ async def prometheus_metrics(response: Response, db: AsyncSession = Depends(get_
             # 重新获取统计数据
             total_users = int((await db.execute(select(func.count()).select_from(User))).scalar() or 0)
             active_users = int((await db.execute(select(func.count()).select_from(User).where(User.is_active == True))).scalar() or 0)
+            active_rate = float(active_users / total_users * 100) if total_users > 0 else 0.0
 
             # 构建符合 Prometheus 文本格式的指标
             lines = [
@@ -131,6 +135,9 @@ async def prometheus_metrics(response: Response, db: AsyncSession = Depends(get_
                 f"# HELP llm_active_users Active users",
                 f"# TYPE llm_active_users gauge",
                 f"llm_active_users {active_users}",
+                f"# HELP llm_active_user_rate Active user rate percentage",
+                f"# TYPE llm_active_user_rate gauge",
+                f"llm_active_user_rate {active_rate}",
             ]
             content = "\n".join(lines) + "\n"
             response.headers["Content-Type"] = "text/plain; version=0.0.4"

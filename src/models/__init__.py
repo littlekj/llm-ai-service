@@ -6,7 +6,8 @@ from src.models.user import User
 from src.models.document import Document
 from src.models.document_job import DocumentJob
 from src.models.chat import ChatSession, ChatMessage
+from src.models.vector_chunk import VectorChunk
 
 
 # 可选：暴露常用模型
-__all__ = ["Base", "User", "Document", "DocumentJob", "ChatSession", "ChatMessage"]
+__all__ = ["Base", "User", "Document", "DocumentJob", "ChatSession", "ChatMessage", "VectorChunk"]

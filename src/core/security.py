@@ -31,7 +31,8 @@ def verify_refresh_token_in_db(raw_token: str, user: User) -> bool:
     """验证 Refresh Token 是否有效"""
     if not user.refresh_token:  # DB 中没有 Refresh Token
         return False
-    return verify_hash(raw_token, user.refresh_token)
+    
+    return verify_hash(plain_value=raw_token, hashed_value=user.refresh_token)
 
 
 """TODO:
@@ -49,7 +50,7 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     expire = now + expires_delta
     to_encode.update({"exp": expire, 'iat': now, "type": "access"})
 
-    return jwt.encode(to_encode, jwt_secret_key, algorithm=settings.JWT_ALGORITHM)
+    return jwt.encode(payload=to_encode, key=jwt_secret_key, algorithm=settings.JWT_ALGORITHM)
 
 
 def create_refresh_token(data: dict, expires_delta: Optional[timedelta] = None):
@@ -60,10 +61,9 @@ def create_refresh_token(data: dict, expires_delta: Optional[timedelta] = None):
         expires_delta = timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
     expire = now + expires_delta
     jti = secrets.token_urlsafe(16)  # 生成唯一的 JWT ID
-    to_encode.update({"exp": expire, 'iat': now,
-                     "type": "refresh", "jti": jti})
+    to_encode.update({"exp": expire, 'iat': now, "type": "refresh", "jti": jti})
 
-    return jwt.encode(to_encode, jwt_secret_key, algorithm=settings.JWT_ALGORITHM)
+    return jwt.encode(payload=to_encode, key=jwt_secret_key, algorithm=settings.JWT_ALGORITHM)
 
 def invalidate_token(token: str, redis_client):
     """使 JWT 令牌失效"""
@@ -72,14 +72,12 @@ def invalidate_token(token: str, redis_client):
 
 def decode_token(token: str):
     """解码并验证 JWT 访问令牌"""
-    try:
-        payload = jwt.decode(token, jwt_secret_key, algorithms=[
-                             settings.JWT_ALGORITHM])
-        return payload
-    except jwt.ExpiredSignatureError:
-        raise HTTPException(status_code=401, detail="Token expired")
-    except jwt.InvalidTokenError:
-        raise HTTPException(status_code=401, detail="Invalid token")
+    payload = jwt.decode(
+        token, 
+        jwt_secret_key, 
+        algorithms=[settings.JWT_ALGORITHM]
+    )
+    return payload
 
 
 def set_refresh_token_cookie(response: Response, refresh_token: str):

@@ -5,11 +5,10 @@ import logging
 from pathlib import Path
 from typing import Dict, Union, BinaryIO
 
-from src.core.errors import ErrorCode, FileValidationError
+from src.core.exceptions import ValidationError
 
 
 logger = logging.getLogger(__name__)
-
 
 ALLOWED_EXTENSIONS = {".pdf", ".docx", ".txt", ".md", ".pptx", ".xlsx"}
 
@@ -90,9 +89,8 @@ async def validate_file_extension(filename: str) -> Union[str, None]:
     ext = Path(filename).suffix.lower()
     if ext not in ALLOWED_EXTENSIONS:
         logger.error(f"File type not allowed: {ext}")
-        raise FileValidationError(
+        raise ValidationError(
             message=f"File type not allowed: {ext}",
-            error_code=ErrorCode.FILE_TYPE_NOT_ALLOWED,
             details={
                 "filename": filename,
                 "extension": ext,
@@ -115,16 +113,14 @@ def validate_file_size(file, max_size: int = MAX_FILE_SIZE) -> int:
     file.seek(0)  # 重置文件指针到开头
 
     if file_size == 0:
-        raise FileValidationError(
+        raise ValidationError(
             message="File size cannot be empty",
-            error_code=ErrorCode.FILE_EMPTY,
             details={"filename": file.name}
         )
         
     if file_size > max_size:
-        raise FileValidationError(
+        raise ValidationError(
             message=f"File size exceeds limit ({max_size}) bytes",
-            error_code=ErrorCode.FILE_TOO_LARGE,
             details={
                 "filename": file.name,
                 "file_size": file_size,
@@ -152,25 +148,22 @@ async def validate_file_size_async(file_obj: BinaryIO, max_size: int = MAX_FILE_
                 break
             total_size += len(chunk)
             if total_size > max_size:
-                raise FileValidationError(
+                raise ValidationError(
                     message=f"File size exceeds limit ({max_size}) bytes",
-                    error_code=ErrorCode.FILE_TOO_LARGE,
                     details={
                         "current_size": total_size,
                         "max_size": max_size
                     }
                 )
         if total_size == 0:
-            raise FileValidationError(
+            raise ValidationError(
                 message="File size cannot be empty",
-                error_code=ErrorCode.FILE_EMPTY,
             )
         return total_size
     
     except IOError as e:
-        raise FileValidationError(
+        raise ValidationError(
             message="Failed to read file",
-            error_code=ErrorCode.FILE_CORRUPTED,
             details={"error": str(e)}
         )
     finally:

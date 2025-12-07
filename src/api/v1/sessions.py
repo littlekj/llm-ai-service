@@ -36,18 +36,14 @@ async def attach_session(
     """
     logger.info(f"Attempting to attach guest session to current user")
     
-    try:
-        # 迁移游客会话到登录用户
-        migrated_count = await chat_crud.attach_session_to_user_async(
-            db=db,
-            client_id=client_id,
-            user_id=current_user.id
-        )
-        if migrated_count > 0:
-            logger.info(f"Migrated {migrated_count} sessions to user {current_user.id}")
-    except Exception as e:
-        logger.error(f"Unexpected error during attach session: {str(e)}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+    # 迁移游客会话到登录用户
+    migrated_count = await chat_crud.attach_session_to_user_async(
+        db=db,
+        client_id=client_id,
+        user_id=current_user.id
+    )
+    if migrated_count > 0:
+        logger.info(f"Migrated {migrated_count} sessions to user {current_user.id}")
 
 
 @router.get("/sessions", response_model=List[SessionResponse])
@@ -64,22 +60,13 @@ async def list_sessions(
     else:
         logger.info(f"Listing sessions for user {current_user.id}")
 
-    try:
-        sessions = await session_service.list_sessions(
-            db=db, 
-            user=current_user,
-            client_id=client_id
-        )
-        
-        if not sessions:
-            logger.warning(f"No sessions found for user")
-            raise HTTPException(status_code=404, detail="No sessions found")
+    sessions = await session_service.list_sessions(
+        db=db, 
+        user=current_user,
+        client_id=client_id
+    )
 
-        return sessions
-    
-    except Exception as e:
-        logger.error(f"Unexpected error during list sessions: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Internal server error")
+    return sessions
 
 @router.get("/sessions/{session_id}/messages", response_model=ChatMessagePaginatedResponse[ChatMessageSchema])
 async def get_session_history(
@@ -97,25 +84,19 @@ async def get_session_history(
     if not current_user:
         logger.warning("User is not authenticated and get session history for guest")
     
-    try:
-        session_history = await session_service.get_session_history(
-            db=db,
-            session_id=session_id,
-            user=current_user,
-            client_id=client_id,
-            page=page,
-            size=size
-        )
-        
-        if not session_history:
-            logger.warning(f"No session history found for session {session_id}")
-            raise HTTPException(status_code=404, detail="Session not found")
-        
-        return session_history
-
-    except Exception as e:
-        logger.error(f"Unexpected error during get session history: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Internal server error")
+    session_history = await session_service.get_session_history(
+        db=db,
+        session_id=session_id,
+        user=current_user,
+        client_id=client_id,
+        page=page,
+        size=size
+    )
+    
+    if not session_history:
+        logger.info(f"No session history found for session {session_id}")
+    
+    return session_history
     
 @router.delete("/sessions/{session_id}", status_code=204)
 async def delete_session(
@@ -131,24 +112,12 @@ async def delete_session(
     else:
         logger.info(f"Attempting to delete session for current user")
     
-    try:
-        success = await session_service.delete_session(
-            db=db, 
-            session_id=session_id,
-            user=current_user,
-            client_id=client_id
-        )
-        
-        if not success:
-            logger.warning(f"Session not found or no permission to delete")
-            raise HTTPException(status_code=404, detail="Session not found")
-
-        logger.info(f"Successfully deleted session {session_id}")
-        return None
-        
-    except Exception as e:
-        logger.error(f"Unexpected error during delete session: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Internal server error")
+    await session_service.delete_session(
+        db=db, 
+        session_id=session_id,
+        user=current_user,
+        client_id=client_id
+    )
     
 @router.get("/messages/{message_id}", response_model=ChatMessageSchema)
 async def get_message(
@@ -164,25 +133,14 @@ async def get_message(
     else:
         logger.info(f"Attempting to get message for current user")
 
-    try:
-        message = await session_service.get_message(
-            db=db,
-            message_id=message_id,
-            user=current_user,
-            client_id=client_id
-        )
+    message = await session_service.get_message(
+        db=db,
+        message_id=message_id,
+        user=current_user,
+        client_id=client_id
+    )
 
-        if not message:
-            logger.warning(f"No message found with id {message_id}")
-            raise HTTPException(status_code=404, detail="Message not found")
-
-        return message
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Unexpected error during get message: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Internal server error")
+    return message
 
 @router.delete("/messages/{message_id}", status_code=204)
 async def delete_message(
@@ -198,18 +156,11 @@ async def delete_message(
     else:
         logger.info(f"Attempting to delete message for current user")
 
-    try:
-        await session_service.delete_message(
-            db=db, 
-            message_id=message_id, 
-            user=current_user, 
-            client_id=client_id
-        )
+    await session_service.delete_message(
+        db=db, 
+        message_id=message_id, 
+        user=current_user, 
+        client_id=client_id
+    )
 
-        logger.info(f"Successfully deleted message {message_id}")
-    
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except Exception as e:
-        logger.error(f"Unexpected error during delete message: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Internal server error")
+    logger.info(f"Successfully deleted message {message_id}")

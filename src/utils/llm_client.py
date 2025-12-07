@@ -125,7 +125,3 @@ class LLMClient:
         except Exception as e:
             logger.error(f"Unexcepted LLM client error: {e}", exc_info=True)
             raise
-        
-async def get_llm_client() -> LLMClient:
-    llm_client = LLMClient()
-    return llm_client
